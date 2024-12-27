@@ -36,6 +36,10 @@ impl EventHandler for DiscordBot {
 
     async fn guild_delete(&mut self, ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
 
+        if !self.prepared_guilds.contains_key(&incomplete.id) {
+            return;
+        }
+
         let guild_identifier;
 
         if let Some(guild) = full {
@@ -49,6 +53,10 @@ impl EventHandler for DiscordBot {
         } else {
             info!("Kicked from guild '{}'!", guild_identifier);
         }
+
+        self.prepared_guilds.remove(&incomplete.id);
+
+        info!("Guild '{}' removed from prepared list!", guild_identifier);
 
     }
 
@@ -83,16 +91,16 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
     }
 
     let required_roles: Vec<(&str, u32)> = vec![
-        ("Level 1 (1-800 ELO)", 0xDDDDDD),
-        ("Level 2 (801-950 ELO)", 0x47E36E),
-        ("Level 3 (951-1100 ELO)", 0x47E36E),
-        ("Level 4 (1101-1250 ELO)", 0xFFCD25),
-        ("Level 5 (1251-1400 ELO)", 0xFFCD25),
-        ("Level 6 (1401-1550 ELO)", 0xFFCD25),
-        ("Level 7 (1551-1700 ELO)", 0xFFCD25),
-        ("Level 8 (1701-1850 ELO)", 0xFF6C20),
-        ("Level 9 (1851-2000 ELO)", 0xFF6C20),
         ("Level 10 (2001+ ELO)", 0xE80128),
+        ("Level 9 (1851-2000 ELO)", 0xFF6C20),
+        ("Level 8 (1701-1850 ELO)", 0xFF6C20),
+        ("Level 7 (1551-1700 ELO)", 0xFFCD25),
+        ("Level 6 (1401-1550 ELO)", 0xFFCD25),
+        ("Level 5 (1251-1400 ELO)", 0xFFCD25),
+        ("Level 4 (1101-1250 ELO)", 0xFFCD25),
+        ("Level 3 (951-1100 ELO)", 0x47E36E),
+        ("Level 2 (801-950 ELO)", 0x47E36E),
+        ("Level 1 (1-800 ELO)", 0xDDDDDD),
     ];
 
     let roles: &HashMap<RoleId, Role> = &guild.roles;
@@ -117,7 +125,7 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
                     sleep(Duration::from_millis(40)).await;
                 },
                 Err(e) => {
-                    error!("Failed to create role in guild '{}' reason: {}", guild.name, e)
+                    error!("Failed to create role in guild '{}' reason: {}", guild.name, e);
                     return None;
                 },
             }
