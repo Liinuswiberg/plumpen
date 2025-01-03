@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.66"
+libsql = "0.6.0"
 serenity = { version = "0.12.0", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 shuttle-runtime = "0.49.0"
 shuttle-serenity = "0.49.0"

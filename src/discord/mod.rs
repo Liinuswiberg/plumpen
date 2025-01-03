@@ -1,23 +1,35 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId};
 use serenity::model::Colour;
 use serenity::async_trait;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info};
 
 pub struct DiscordBot{
-    prepared_guilds: HashMap<GuildId, HashMap<&'static str, RoleId>>,
+    prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
+}
+
+impl DiscordBot {
+    pub fn new() -> Self {
+        Self {
+            prepared_guilds: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }
 
 #[async_trait]
 impl EventHandler for DiscordBot {
-    async fn guild_create(&mut self, ctx: Context, guild: Guild, is_new: Option<bool>) {
+    async fn guild_create(&self, ctx: Context, guild: Guild, is_new: Option<bool>) {
 
         info!("Connection to guild '{}' established!", guild.name);
 
-        if !self.prepared_guilds.contains_key(&guild.id) {
-            info!("Guild already prepared!", guild.name);
+        let mut data = self.prepared_guilds.lock().await;
+
+        if !data.contains_key(&guild.id) {
+            info!("Guild '{}' already prepared!", guild.name);
             return;
         }
 
@@ -25,18 +37,19 @@ impl EventHandler for DiscordBot {
 
         match guild_roles {
             Some(value) => {
-                self.prepared_guilds.insert(guild.id, value);
+                data.insert(guild.id, value);
             },
-            None() => {
+            None => {
                 error!("Failed to prepare guild '{}'", guild.name)
             },
         }
 
     }
 
-    async fn guild_delete(&mut self, ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
+    async fn guild_delete(&self, ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
 
-        if !self.prepared_guilds.contains_key(&incomplete.id) {
+        let mut data = self.prepared_guilds.lock().await;
+        if !data.contains_key(&incomplete.id) {
             return;
         }
 
@@ -54,7 +67,7 @@ impl EventHandler for DiscordBot {
             info!("Kicked from guild '{}'!", guild_identifier);
         }
 
-        self.prepared_guilds.remove(&incomplete.id);
+        data.remove(&incomplete.id);
 
         info!("Guild '{}' removed from prepared list!", guild_identifier);
 
@@ -71,11 +84,6 @@ impl EventHandler for DiscordBot {
 
 
     async fn ready(&self, _: Context, ready: Ready) {
-
-        DiscordBot {
-            prepared_guilds: HashMap::new(),
-        };
-
         info!("{} is connected!", ready.user.name);
     }
 
