@@ -5,16 +5,18 @@ mod faceit;
 use anyhow::Context as _;
 use serenity::prelude::*;
 use shuttle_runtime::SecretStore;
+use tracing::info;
 use discord::DiscordBot;
+use crate::database::Database;
 
 #[shuttle_runtime::main]
 async fn serenity(
     #[shuttle_runtime::Secrets] secrets: SecretStore,
 ) -> shuttle_serenity::ShuttleSerenity {
 
-    let token = secrets
-        .get("DISCORD_TOKEN")
-        .context("'DISCORD_TOKEN' was not found")?;
+    let database = Database::new(secrets.get("TURSO_DATABASE").context("'TURSO_DATABASE' was not found")?, secrets.get("TURSO_TOKEN").context("'TURSO_TOKEN' was not found")?)
+        .await
+        .expect("Error establishing database connection");
 
     let intents = GatewayIntents::GUILD_MEMBERS |
         GatewayIntents::GUILD_MESSAGES |
@@ -22,10 +24,10 @@ async fn serenity(
         GatewayIntents::MESSAGE_CONTENT |
         GatewayIntents::GUILDS;
 
-    let discord_bot = DiscordBot::new();
+    let discord = DiscordBot::new();
 
-    let client = Client::builder(&token, intents)
-        .event_handler(discord_bot)
+    let client = Client::builder(secrets.get("DISCORD_TOKEN").context("'DISCORD_TOKEN' was not found")?, intents)
+        .event_handler(discord)
         .await
         .expect("Err creating client");
 
