@@ -24,6 +24,40 @@ impl Database {
         }
     }
 
+    pub async fn user_exists(&self, discord_id: String) -> Result<bool, Error> {
+
+        let con = self.db.connect()?;
+
+        let mut result = con.query("SELECT * FROM users WHERE discord_id = (:discord_id);",
+                     libsql::named_params! { ":discord_id": discord_id }).await?;
+
+        match result.next().await? {
+            Some(_row) => {Ok(true)},
+            None => {Ok(false)},
+        }
+
+    }
+
+    pub async fn add_user(&self, faceit_id: String, discord_id: String) -> Result<bool, Error> {
+        let con = self.db.connect()?;
+
+        let results = con.execute("INSERT INTO users (discord_id, faceit_id) VALUES (:discord_id, :faceit_id)",
+                    libsql::named_params! { ":discord_id": discord_id, ":faceit_id": faceit_id }).await?;
+
+        Ok(results != 0)
+    }
+
+    pub async fn unlink_user(&self, discord_id: String) -> Result<bool, Error> {
+        let con = self.db.connect()?;
+
+
+        let results = con.execute("DELETE FROM users WHERE discord_id = :discord_id;",
+                                  libsql::named_params! { ":discord_id": discord_id}).await?;
+
+        Ok(results != 0)
+
+    }
+
     pub async fn count_users(&self) -> Result<i64, Error> {
         let con = self.db.connect()?;
 

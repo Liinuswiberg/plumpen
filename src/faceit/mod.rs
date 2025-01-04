@@ -10,7 +10,7 @@ pub struct Faceit {
 #[derive(Deserialize)]
 pub struct Player {
     pub player_id: String,
-    nickname: String,
+    pub nickname: String,
     games: serde_json::Map<String, serde_json::Value>
 }
 

@@ -5,6 +5,7 @@ use serenity::model::Colour;
 use serenity::async_trait;
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use anyhow::Error;
 use tokio::time::sleep;
 use tracing::{error, info};
 use regex::Regex;
@@ -25,6 +26,25 @@ impl DiscordBot {
             faceit
         }
     }
+
+    pub async fn link_user(&self, parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
+
+        let player_data = self.faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await?;
+
+        let db = self.database.lock().await;
+
+        let exists = db.user_exists(msg.author.id.to_string()).await?;
+
+        if exists {
+            msg.channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
+            return Ok(false);
+        };
+
+        let success = db.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
+
+        Ok(success)
+    }
+
 }
 
 #[async_trait]
@@ -89,21 +109,84 @@ impl EventHandler for DiscordBot {
         let link_regex = Regex::new(r"^!link (\S+)$").unwrap();
 
         if msg.content == "!status" {
+
             let data = self.prepared_guilds.lock().await;
             let db = self.database.lock().await;
-            let user_count = db.count_users().await.unwrap();
+            let Ok(user_count) = db.count_users().await else {
+                error!("Error counting users");
+                return;
+            };
             if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", data.len(), user_count)).await {
                 error!("Error sending message: {:?}", e);
             }
+
         } else if msg.content == "!unlink" {
-            // Unlink here
+
+            let db = self.database.lock().await;
+
+            let Ok(exists) = db.user_exists(msg.author.id.to_string()).await else {
+                error!("Error checking if user exists");
+                return;
+            };
+
+            if !exists {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"User not linked. Please link using '!link *faceitUsername*'").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            let Ok(success) = db.unlink_user(msg.author.id.to_string()).await else {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                error!("Error unlinking user");
+                return;
+            };
+
+            if success {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully unlinked user '{}'.", msg.author.name)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                error!("Error unlinking user");
+            } else {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                error!("Error unlinking user");
+            }
+
         } else if let Some(caps) = link_regex.captures(&*msg.content) {
 
-            let username = caps.get(1).unwrap().as_str();
+            let Some(username) = caps.get(1) else {
+                error!("Error getting username from regex capture");
+                return;
+            };
 
-            let player_data = self.faceit.get_faceit_user_by_nickname(username.parse().unwrap()).await.unwrap();
+            let Ok(parsed_username) = username.as_str().parse() else {
+                error!("Error parsing username");
+                return;
+            };
 
-            info!("Faceit id: {}. Discord id: {}", player_data.player_id, msg.author.id);
+            match self.link_user(&parsed_username, &ctx, &msg).await {
+                Ok(success) => {
+                    if success {
+                        info!("Successfully linked user: {}", msg.author.name);
+                        if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully linked Discord user '{}' to Faceit account '{}'.", msg.author.name, parsed_username)).await {
+                            error!("Error sending message: {:?}", e);
+                        }
+                    } else {
+                        error!("Error linking Discord user '{}' to Faceit account '{}'", msg.author.name, parsed_username);
+                    }
+                },
+                Err(e) => {
+                    if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to link Discord user '{}' to Faceit account '{}'.", msg.author.name, parsed_username)).await {
+                        error!("Error sending message: {:?}", e);
+                    }
+                    error!("Error linking user {}", e);
+                }
+            }
+
         }
 
     }
@@ -135,7 +218,7 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
     let mut actual_roles: HashMap<&str, RoleId> = HashMap::new();
 
     for (role, color) in &required_roles {
-        if let Some((key, value)) = roles.iter().find(|(_, &ref v)| v.name.as_str() == *role) {
+        if let Some((key, _value)) = roles.iter().find(|(_, &ref v)| v.name.as_str() == *role) {
             actual_roles.insert(*role, *key);
         } else {
             info!("Role '{}' not found, attempting to create!",role);
