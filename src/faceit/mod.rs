@@ -1,23 +1,17 @@
+use anyhow::Error;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Client;
-use serde::{Deserialize};
-use shuttle_runtime::__internals::serde_json;
+use serde::Deserialize;
 
 pub struct Faceit {
     token: String
 }
 
-#[derive(Deserialize, Debug)]
-struct GameInfo {
-    skill_level: u32,
-    faceit_elo: u32,
-}
-
 #[derive(Deserialize)]
-struct Player {
-    player_id: String,
+pub struct Player {
+    pub player_id: String,
     nickname: String,
-    games: serde_json::Map<String, GameInfo>,
+    games: serde_json::Map<String, serde_json::Value>
 }
 
 impl Faceit {
@@ -31,7 +25,7 @@ impl Faceit {
         println!("Hello from my_module!");
     }
 
-    pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<(Player), Box<dyn std::error::Error>> {
+    pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<Player, Error> {
         let url = format!("https://open.faceit.com/data/v4/players?nickname={}&game=cs2", username);
 
         let mut headers = HeaderMap::new();
@@ -51,7 +45,7 @@ impl Faceit {
 
             Ok(player)
         } else {
-            eprintln!("Error: {:?}", response.status());
+            Err(anyhow::anyhow!("Failed to get faceit user!"))
         }
 
     }

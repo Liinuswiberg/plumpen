@@ -101,8 +101,9 @@ impl EventHandler for DiscordBot {
 
             let username = caps.get(1).unwrap().as_str();
 
-            // Link logic :)
-            info!("Username captured {}", username);
+            let player_data = self.faceit.get_faceit_user_by_nickname(username.parse().unwrap()).await.unwrap();
+
+            info!("Faceit id: {}. Discord id: {}", player_data.player_id, msg.author.id);
         }
 
     }
