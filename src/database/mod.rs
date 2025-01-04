@@ -1,3 +1,4 @@
+use anyhow::Error;
 use libsql::Builder;
 use tracing::{info};
 
@@ -22,4 +23,19 @@ impl Database {
             }
         }
     }
+
+    pub async fn count_users(&self) -> Result<i64, Error> {
+        let con = self.db.connect()?;
+
+        let mut result = con.query("SELECT COUNT(*) FROM users;", ()).await?;
+
+        while let Some(row) = result.next().await? {
+            let count: i64 = row.get(0)?;
+            return Ok(count);
+        }
+
+        Err(anyhow::anyhow!("Failed to count rows"))
+
+    }
+
 }

@@ -31,7 +31,7 @@ impl EventHandler for DiscordBot {
 
         let mut data = self.prepared_guilds.lock().await;
 
-        if !data.contains_key(&guild.id) {
+        if data.contains_key(&guild.id) {
             info!("Guild '{}' already prepared!", guild.name);
             return;
         }
@@ -41,6 +41,7 @@ impl EventHandler for DiscordBot {
         match guild_roles {
             Some(value) => {
                 data.insert(guild.id, value);
+                info!("Guild prepared successfully. Total number of prepared guilds: {}", data.len());
             },
             None => {
                 error!("Failed to prepare guild '{}'", guild.name)
@@ -78,13 +79,15 @@ impl EventHandler for DiscordBot {
 
     async fn message(&self, ctx: Context, msg: Message) {
         info!(msg.content);
-        if msg.content == "!hello" {
-            if let Err(e) = msg.channel_id.say(&ctx.http, "asd!").await {
+        if msg.content == "!status" {
+            let data = self.prepared_guilds.lock().await;
+            let db = self.database.lock().await;
+            let user_count = db.count_users().await.unwrap();
+            if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", data.len(), user_count)).await {
                 error!("Error sending message: {:?}", e);
             }
         }
     }
-
 
     async fn ready(&self, _: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
@@ -95,11 +98,6 @@ impl EventHandler for DiscordBot {
 async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static str, RoleId>> {
 
     info!("Preparing guild '{}' with ID '{}'!", guild.name, guild.id);
-
-    if guild.id != 1322261733053825086 {
-        info!("Testing mode on, returning.");
-        return None;
-    }
 
     let required_roles: Vec<(&str, u32)> = vec![
         ("Level 10 (2001+ ELO)", 0xE80128),
@@ -120,7 +118,6 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
     for (role, color) in &required_roles {
         if let Some((key, value)) = roles.iter().find(|(_, &ref v)| v.name.as_str() == *role) {
             actual_roles.insert(*role, *key);
-            info!("Found: key = {}, value = {}", key, value.name);
         } else {
             info!("Role '{}' not found, attempting to create!",role);
 
