@@ -6,7 +6,6 @@ pub struct Database {
 }
 
 impl Database {
-
     pub async fn new(url: String, token: String) -> Result<Self, libsql::Error> {
         let db_result = Builder::new_remote(url, token)
             .build()

@@ -1,21 +1,24 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId};
 use serenity::model::Colour;
 use serenity::async_trait;
 use tokio::sync::Mutex;
+use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::{error, info};
+use crate::database::Database;
 
 pub struct DiscordBot{
     prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
+    database: Arc<Mutex<Database>>
 }
 
 impl DiscordBot {
-    pub fn new() -> Self {
+    pub fn new(database: Arc<Mutex<Database>>) -> Self {
         Self {
             prepared_guilds: Arc::new(Mutex::new(HashMap::new())),
+            database
         }
     }
 }
