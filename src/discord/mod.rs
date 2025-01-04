@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::{error, info};
+use regex::Regex;
 use crate::database::Database;
 
 pub struct DiscordBot{
@@ -78,7 +79,12 @@ impl EventHandler for DiscordBot {
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
+
+        // Debug
         info!(msg.content);
+
+        let link_regex = Regex::new(r"^!link (\S+)$").unwrap();
+
         if msg.content == "!status" {
             let data = self.prepared_guilds.lock().await;
             let db = self.database.lock().await;
@@ -86,7 +92,16 @@ impl EventHandler for DiscordBot {
             if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", data.len(), user_count)).await {
                 error!("Error sending message: {:?}", e);
             }
+        } else if msg.content == "!unlink" {
+            // Unlink here
+        } else if let Some(caps) = link_regex.captures(&*msg.content) {
+
+            let username = caps.get(1).unwrap().as_str();
+
+            // Link logic :)
+            info!("Username captured {}", username);
         }
+
     }
 
     async fn ready(&self, _: Context, ready: Ready) {
