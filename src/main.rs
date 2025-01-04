@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use serenity::prelude::*;
 use shuttle_runtime::SecretStore;
 use discord::DiscordBot;
+use faceit::Faceit;
 use crate::database::Database;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -21,13 +22,15 @@ async fn serenity(
 
     let database = Arc::new(Mutex::new(database));
 
+    let faceit = Faceit::new(secrets.get("FACEIT_TOKEN").context("'FACEIT_TOKEN' was not found")?);
+
     let intents = GatewayIntents::GUILD_MEMBERS |
         GatewayIntents::GUILD_MESSAGES |
         GatewayIntents::DIRECT_MESSAGES |
         GatewayIntents::MESSAGE_CONTENT |
         GatewayIntents::GUILDS;
 
-    let discord = DiscordBot::new(database);
+    let discord = DiscordBot::new(database, faceit);
 
     let client = Client::builder(secrets.get("DISCORD_TOKEN").context("'DISCORD_TOKEN' was not found")?, intents)
         .event_handler(discord)

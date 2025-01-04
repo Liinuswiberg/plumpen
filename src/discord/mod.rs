@@ -9,17 +9,20 @@ use tokio::time::sleep;
 use tracing::{error, info};
 use regex::Regex;
 use crate::database::Database;
+use crate::faceit::Faceit;
 
 pub struct DiscordBot{
     prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
-    database: Arc<Mutex<Database>>
+    database: Arc<Mutex<Database>>,
+    faceit: Faceit
 }
 
 impl DiscordBot {
-    pub fn new(database: Arc<Mutex<Database>>) -> Self {
+    pub fn new(database: Arc<Mutex<Database>>, faceit: Faceit) -> Self {
         Self {
             prepared_guilds: Arc::new(Mutex::new(HashMap::new())),
-            database
+            database,
+            faceit
         }
     }
 }
