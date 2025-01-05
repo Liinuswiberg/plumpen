@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http};
+use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse};
 use serenity::model::{guild, Colour};
-use serenity::async_trait;
+use serenity::{async_trait, http};
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use anyhow::Error;
@@ -63,36 +63,14 @@ impl DiscordBot {
         match deference {
             Some(http) => {
 
-                let user = http.get_current_user().await?;
-
                 let guilds = self.guilds.lock().await;
 
                 for (_guild_id, guild) in guilds.iter() {
 
-                    let member = guild.member(http, user.id).await?;
-                    let Some(default_channel) = guild.default_channel(user.id) else {
-                        error!("No default channel found in guild {}.", guild.name);
-                        continue;
-                    };
-
-                    let permissions = guild.user_permissions_in(default_channel, &*member);
-
-                    if !permissions.manage_nicknames() {
-                        error!("Cannot manage nicknames in guild {}.", guild.name);
-                        continue;
-                    }
-                    if guild.owner_id == discord_id {
-                        info!("Cannot rename owner in guild {}.", guild.name);
-                        continue;
-                    }
-
-                    match guild.member(http, &discord_id).await {
-                        Ok(u) => {
-                            info!("Attempting to rename user in guild {}.", guild.name);
-                            guild.edit_member(http, discord_id, EditMember::new().nickname("")).await?;
-                            info!("Renamed user in guild {} successfully.", guild.name);
-                        },
-                        Err(e) => info!("User not in guild {}.", guild.name)
+                    info!("Attempting to rename user in guild {}.", guild.name);
+                    let success = self.edit_member(http, guild, discord_id, "", "").await;
+                    if success {
+                        info!("Renamed user in guild {} successfully.", guild.name);
                     }
 
                 }
@@ -104,6 +82,68 @@ impl DiscordBot {
         }
 
         Ok(true)
+
+    }
+
+    async fn edit_member(&self, http: &Arc<Http>, guild: &Guild, member_id: UserId, new_name: &str, role: &str) -> bool {
+
+        let Ok(target_member) = guild.member(http, &member_id).await else {
+            info!("User not in guild {}.", guild.name);
+            return false;
+        };
+
+        let Ok(current_user) = http.get_current_user().await else {
+            error!("Error getting current user");
+            return false;
+        };
+
+        let Ok(guild_user) = guild.member(http, current_user.id).await else {
+            error!("Error getting current user guild member object");
+            return false;
+        };
+
+        let Some(default_channel) = guild.default_channel(current_user.id) else {
+            error!("No default channel found in guild {}.", guild.name);
+            return false;
+        };
+
+        let permissions = guild.user_permissions_in(default_channel, &*guild_user);
+
+        if !permissions.manage_nicknames() && !permissions.manage_roles() {
+            error!("Cannot manage nicknames and/or roles in guild {}.", guild.name);
+            return false;
+        }
+        if guild.owner_id == member_id {
+            info!("Cannot rename owner in guild {}.", guild.name);
+            return false;
+        }
+
+        let prepared_guilds = self.prepared_guilds.lock().await;
+
+        let Some(prepared_guild) = prepared_guilds.get(&guild.id) else {
+            error!("Guild not prepared properly {}.", guild.name);
+            return false;
+        };
+
+        let all_roles: &Vec<RoleId> = &prepared_guild.values().cloned().collect();
+
+        let target_roles: Vec<RoleId> = target_member.roles.clone()
+            .into_iter()
+            .filter(|role| !all_roles.contains(role))
+            .collect();
+
+        let result = guild.edit_member(http, member_id, EditMember::new().nickname(new_name).roles(target_roles)).await;
+
+        match result {
+            Ok(_) => {
+                info!("Successfully edited guild member '{}' in guild '{}'.", member_id, guild.name);
+                true
+            },
+            Err(e) => {
+                error!("Error when attempting to edit guild member '{}' in guild '{}'.", member_id, guild.name);
+                false
+            }
+        }
 
     }
 
