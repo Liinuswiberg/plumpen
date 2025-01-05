@@ -1,7 +1,8 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId};
-use serenity::model::Colour;
+use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http};
+use serenity::model::{guild, Colour};
 use serenity::async_trait;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -9,13 +10,16 @@ use anyhow::Error;
 use tokio::time::sleep;
 use tracing::{error, info};
 use regex::Regex;
+use serenity::builder::EditMember;
 use crate::database::Database;
 use crate::faceit::Faceit;
 
 pub struct DiscordBot{
     prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
     database: Arc<Mutex<Database>>,
-    faceit: Faceit
+    faceit: Faceit,
+    guilds: Arc<Mutex<HashMap<GuildId, Guild>>>,
+    http: Mutex<Option<Arc<Http>>>,
 }
 
 impl DiscordBot {
@@ -23,7 +27,9 @@ impl DiscordBot {
         Self {
             prepared_guilds: Arc::new(Mutex::new(HashMap::new())),
             database,
-            faceit
+            faceit,
+            guilds: Arc::new(Mutex::new(HashMap::new())),
+            http: Mutex::new(None),
         }
     }
 
@@ -45,6 +51,52 @@ impl DiscordBot {
         Ok(success)
     }
 
+    pub async fn clear_nickname(&self, discord_id: UserId) -> Result<bool, Error> {
+
+        let guilds = self.guilds.lock().await;
+
+        let http = self.http.lock().await;
+
+        let deference = http.as_ref();
+
+        match deference {
+            Some(http) => {
+
+                let user = http.get_current_user().await?;
+
+                for (_guild_id, guild) in guilds.iter() {
+
+                    let member = guild.member(http, user.id).await?;
+                    let Some(default_channel) = guild.default_channel(user.id) else {
+                        error!("No default channel found in guild {}.", guild.name);
+                        continue;
+                    };
+
+                    let permissions = guild.user_permissions_in(default_channel, &*member);
+
+                    if !permissions.manage_nicknames() {
+                        error!("Cannot manage nicknames in guild {}.", guild.name);
+                        continue;
+                    }
+                    if guild.owner_id == discord_id {
+                        info!("Cannot rename owner in guild {}.", guild.name);
+                        continue;
+                    }
+                    if guild.members.contains_key(&discord_id) {
+                        guild.edit_member(http, discord_id, EditMember::new().nickname("")).await?;
+                    };
+                }
+            }
+            _ => {
+                error!("Failed to borrow Discord HTTP.");
+                return Err(anyhow::anyhow!("Failed to borrow Discord HTTP"))
+            }
+        }
+
+        Ok(true)
+
+    }
+
 }
 
 #[async_trait]
@@ -53,9 +105,10 @@ impl EventHandler for DiscordBot {
 
         info!("Connection to guild '{}' established!", guild.name);
 
-        let mut data = self.prepared_guilds.lock().await;
+        let mut prepared_guilds = self.prepared_guilds.lock().await;
+        let mut guilds = self.guilds.lock().await;
 
-        if data.contains_key(&guild.id) {
+        if prepared_guilds.contains_key(&guild.id) {
             info!("Guild '{}' already prepared!", guild.name);
             return;
         }
@@ -64,8 +117,9 @@ impl EventHandler for DiscordBot {
 
         match guild_roles {
             Some(value) => {
-                data.insert(guild.id, value);
-                info!("Guild prepared successfully. Total number of prepared guilds: {}", data.len());
+                prepared_guilds.insert(guild.id, value);
+                guilds.insert(guild.id, guild);
+                info!("Guild prepared successfully. Total number of prepared guilds: {}", prepared_guilds.len());
             },
             None => {
                 error!("Failed to prepare guild '{}'", guild.name)
@@ -76,8 +130,10 @@ impl EventHandler for DiscordBot {
 
     async fn guild_delete(&self, ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
 
-        let mut data = self.prepared_guilds.lock().await;
-        if !data.contains_key(&incomplete.id) {
+        let mut prepared_guilds = self.prepared_guilds.lock().await;
+        let mut guilds = self.guilds.lock().await;
+
+        if !prepared_guilds.contains_key(&incomplete.id) {
             return;
         }
 
@@ -95,7 +151,8 @@ impl EventHandler for DiscordBot {
             info!("Kicked from guild '{}'!", guild_identifier);
         }
 
-        data.remove(&incomplete.id);
+        prepared_guilds.remove(&incomplete.id);
+        guilds.remove(&incomplete.id);
 
         info!("Guild '{}' removed from prepared list!", guild_identifier);
 
@@ -148,7 +205,6 @@ impl EventHandler for DiscordBot {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully unlinked user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
                 }
-                error!("Error unlinking user");
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
@@ -191,7 +247,10 @@ impl EventHandler for DiscordBot {
 
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
+        let mut http = self.http.lock().await;
+        *http = Some(ctx.http.clone());
+
         info!("{} is connected!", ready.user.name);
     }
 
