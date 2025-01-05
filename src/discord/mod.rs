@@ -66,8 +66,6 @@ impl DiscordBot {
 
                 for (_guild_id, guild) in guilds.iter() {
 
-                    info!("clearing user nickname in {}", guild.name);
-
                     let member = guild.member(http, user.id).await?;
                     let Some(default_channel) = guild.default_channel(user.id) else {
                         error!("No default channel found in guild {}.", guild.name);
