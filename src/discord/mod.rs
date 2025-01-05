@@ -68,7 +68,7 @@ impl DiscordBot {
                 for (_guild_id, guild) in guilds.iter() {
 
                     info!("Attempting to rename user in guild {}.", guild.name);
-                    let success = self.edit_member(http, guild, discord_id, "", "").await;
+                    let success = self.edit_member(http, guild, discord_id, "", None).await;
                     if success {
                         info!("Renamed user in guild {} successfully.", guild.name);
                     }
@@ -85,7 +85,7 @@ impl DiscordBot {
 
     }
 
-    async fn edit_member(&self, http: &Arc<Http>, guild: &Guild, member_id: UserId, new_name: &str, role: &str) -> bool {
+    async fn edit_member(&self, http: &Arc<Http>, guild: &Guild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
 
         let Ok(target_member) = guild.member(http, &member_id).await else {
             info!("User not in guild {}.", guild.name);
@@ -124,6 +124,17 @@ impl DiscordBot {
             error!("Guild not prepared properly {}.", guild.name);
             return false;
         };
+
+        let all_roles: &Vec<RoleId> = &prepared_guild.values().cloned().collect();
+
+        let mut target_roles: Vec<RoleId> = target_member.roles.clone()
+            .into_iter()
+            .filter(|role| !all_roles.contains(role))
+            .collect();
+
+        if role.is_some() {
+            target_roles.push(role.unwrap());
+        }
 
         let all_roles: &Vec<RoleId> = &prepared_guild.values().cloned().collect();
 
