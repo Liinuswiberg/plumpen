@@ -53,8 +53,6 @@ impl DiscordBot {
 
     pub async fn clear_nickname(&self, discord_id: UserId) -> Result<bool, Error> {
 
-        let guilds = self.guilds.lock().await;
-
         let http = self.http.lock().await;
 
         let deference = http.as_ref();
@@ -64,7 +62,11 @@ impl DiscordBot {
 
                 let user = http.get_current_user().await?;
 
+                let guilds = self.guilds.lock().await;
+
                 for (_guild_id, guild) in guilds.iter() {
+
+                    info!("clearing user nickname in {}", guild.name);
 
                     let member = guild.member(http, user.id).await?;
                     let Some(default_channel) = guild.default_channel(user.id) else {
@@ -82,9 +84,16 @@ impl DiscordBot {
                         info!("Cannot rename owner in guild {}.", guild.name);
                         continue;
                     }
-                    if guild.members.contains_key(&discord_id) {
-                        guild.edit_member(http, discord_id, EditMember::new().nickname("")).await?;
-                    };
+
+                    match guild.member(http, &discord_id).await {
+                        Ok(u) => {
+                            info!("Attempting to rename user in guild {}.", guild.name);
+                            guild.edit_member(http, discord_id, EditMember::new().nickname("")).await?;
+                            info!("Renamed user in guild {} successfully.", guild.name);
+                        },
+                        Err(e) => info!("User not in guild {}.", guild.name)
+                    }
+
                 }
             }
             _ => {
@@ -205,6 +214,9 @@ impl EventHandler for DiscordBot {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully unlinked user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
                 }
+                if let Err(e) = self.clear_nickname(msg.author.id).await {
+                    error!("Error clearing nickname: {:?}", e);
+                };
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
