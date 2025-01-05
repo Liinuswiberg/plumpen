@@ -35,7 +35,10 @@ impl DiscordBot {
 
     pub async fn link_user(&self, parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
 
-        let player_data = self.faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await?;
+        let Some(player_data) = self.faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
+            msg.channel_id.say(&ctx.http, "Faceit account not found.").await?;
+            return Ok(false);
+        };
 
         let db = self.database.lock().await;
 

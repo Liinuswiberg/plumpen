@@ -7,11 +7,11 @@ pub struct Faceit {
     token: String
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Player {
     pub player_id: String,
     pub nickname: String,
-    games: serde_json::Map<String, serde_json::Value>
+    games: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Faceit {
@@ -25,7 +25,7 @@ impl Faceit {
         println!("Hello from my_module!");
     }
 
-    pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<Player, Error> {
+    pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<Option<Player>, Error> {
         let url = format!("https://open.faceit.com/data/v4/players?nickname={}&game=cs2", username);
 
         let mut headers = HeaderMap::new();
@@ -43,7 +43,9 @@ impl Faceit {
 
             let player: Player = serde_json::from_str(&body)?;
 
-            Ok(player)
+            Ok(Some(player))
+        } else if response.status().is_client_error() {
+            Ok(None)
         } else {
             Err(anyhow::anyhow!("Failed to get faceit user!"))
         }
