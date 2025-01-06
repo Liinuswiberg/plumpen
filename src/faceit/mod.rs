@@ -1,11 +1,10 @@
+use std::env;
 use anyhow::Error;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Client;
 use serde::Deserialize;
 
-pub struct Faceit {
-    token: String
-}
+pub struct Faceit;
 
 #[derive(Deserialize, Debug)]
 pub struct Player {
@@ -43,21 +42,19 @@ impl Player {
 }
 
 impl Faceit {
-    pub fn new(token: String) -> Self {
-        Self {
-            token
-        }
-    }
 
     pub async fn get_faceit_user_by_id() {
         println!("Hello from my_module!");
     }
 
     pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<Option<Player>, Error> {
+
+        let token = env::var("FACEIT_TOKEN").expect("Failed to get FACEIT_TOKEN!");
+
         let url = format!("https://open.faceit.com/data/v4/players?nickname={}&game=cs2", username);
 
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", self.token))?);
+        headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", token))?);
 
         let client = Client::new();
 

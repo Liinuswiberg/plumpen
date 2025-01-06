@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User};
+use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User, PartialGuild};
 use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
@@ -15,55 +15,60 @@ use serenity::builder::EditMember;
 use crate::database::Database;
 use crate::faceit::{Faceit, Player};
 
-pub struct DiscordBot{
-    prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
-    database: Arc<Mutex<Database>>,
-    faceit: Faceit,
-    guilds: Arc<Mutex<HashMap<GuildId, Guild>>>,
-    http: Mutex<Option<Arc<Http>>>,
-}
+pub struct DiscordBot;
+
+const ALL_ROLES: &[&str] = &[
+    "Level 1 (1-800 ELO)",
+    "Level 2 (801-950 ELO)",
+    "Level 3 (951-1100 ELO)",
+    "Level 4 (1101-1250 ELO)",
+    "Level 5 (1251-1400 ELO)",
+    "Level 6 (1401-1550 ELO)",
+    "Level 7 (1551-1700 ELO)",
+    "Level 8 (1701-1850 ELO)",
+    "Level 9 (1851-2000 ELO)",
+    "Level 10 (2001+ ELO)",
+];
 
 impl DiscordBot {
-    pub fn new(database: Arc<Mutex<Database>>, faceit: Faceit) -> Self {
-        Self {
-            prepared_guilds: Arc::new(Mutex::new(HashMap::new())),
-            database,
-            faceit,
-            guilds: Arc::new(Mutex::new(HashMap::new())),
-            http: Mutex::new(None),
-        }
-    }
 
     pub async fn link_user(&self, parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
 
-        let Some(player_data) = self.faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
+        let Some(player_data) = Faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
             msg.channel_id.say(&ctx.http, "Faceit account not found.").await?;
             return Ok(false);
         };
 
-        let db = self.database.lock().await;
-
-        let exists = db.user_exists(msg.author.id.to_string()).await?;
+        let exists = Database.user_exists(msg.author.id.to_string()).await?;
 
         if exists {
             msg.channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
             return Ok(false);
         };
 
-        let success = db.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
+        let success = Database.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
 
-        let _ = self.parse_user(&msg.author, player_data);
+        let _ = self.parse_user(&ctx.http, &msg.author, player_data);
 
         Ok(success)
     }
 
-    pub async fn clear_user(&self, discord_id: UserId) -> () {
+    pub async fn clear_user(&self, http: &Arc<Http>, discord_id: UserId) -> () {
 
-        let guilds = self.guilds.lock().await;
+        let Ok(guilds) = http.get_guilds(None, Some(100)).await else {
+            error!("Error attempting to get guilds.");
+            return;
+        };
 
-        for (_guild_id, guild) in guilds.iter() {
+        for guild_info in guilds.iter() {
+
+            let Ok(guild) = http.get_guild(guild_info.id).await else {
+                error!("Error attempting to get guild.");
+                continue;
+            };
+
             info!("Attempting to edit user in guild {}.", guild.name);
-            let success = self.edit_member(guild, discord_id, "", None).await;
+            let success = self.edit_member(&http, &guild, discord_id, "", None).await;
             if success {
                 info!("Edited user in guild {} successfully.", guild.name);
             } else {
@@ -73,16 +78,59 @@ impl DiscordBot {
 
     }
 
-    async fn edit_member(&self, guild: &Guild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
+    pub async fn parse_user(&self, http: &Arc<Http>, user: &User, player: Player) {
 
-        let lock = self.http.lock().await;
-
-        let Some(http) = lock.as_ref() else {
-            error!("Failed to borrow Discord HTTP.");
-            return false;
+        let Some(level) = player.get_player_skill_level() else {
+            error!("Could not get player skill level!");
+            return;
+        };
+        let Some(elo) = player.get_player_elo() else {
+            error!("Could not get player elo!");
+            return;
         };
 
-        let Ok(target_member) = guild.member(http, &member_id).await else {
+        let suggested_name: &str = &format!("({} ELO) {}", elo, player.nickname);
+
+        let suggested_role: &str = ALL_ROLES.get(level - 1).unwrap_or(&"");
+
+        let Ok(guilds) = http.get_guilds(None, Some(100)).await else {
+            error!("Error attempting to get guilds.");
+            return;
+        };
+
+        for guild_info in guilds.iter() {
+
+            let Ok(guild) = http.get_guild(guild_info.id).await else {
+                error!("Error attempting to get guild.");
+                continue;
+            };
+
+            info!("Attempting to edit user in guild {}.", guild.name);
+
+            let success;
+
+            match guild.role_by_name(suggested_role) {
+                None => {
+                    success = self.edit_member(&http, &guild, user.id, suggested_name, None).await;
+                }
+                Some(role) => {
+                    info!("{}", format!("Role id: {}", role.id));
+                    success = self.edit_member(&http, &guild, user.id, suggested_name, Some(role.id)).await;
+                }
+            }
+
+            if success {
+                info!("Renamed user in guild {} successfully.", guild.name);
+            } else {
+                error!("Error attempting to edit user in guild {}.", guild.name);
+            }
+        }
+
+    }
+
+    async fn edit_member(&self, http: &Arc<Http>, guild: &PartialGuild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
+
+        let Ok(target_member) = guild.member(&http, &member_id).await else {
             info!("User not in guild {}.", guild.name);
             return true;
         };
@@ -91,6 +139,13 @@ impl DiscordBot {
             error!("Error getting current user");
             return false;
         };
+
+        /*
+
+        @TODO: Permission check wont work with a partial guild. Find out how to do this.
+        You can access channels using a partial guild using guild.channels
+        This returns a hashmap, I could get a channel ID from there.
+        But that feels so clunky...
 
         let Ok(guild_user) = guild.member(http, current_user.id).await else {
             error!("Error getting current user guild member object");
@@ -108,17 +163,15 @@ impl DiscordBot {
             error!("Cannot manage nicknames and/or roles in guild {}.", guild.name);
             return false;
         }
+
+         */
+
         if guild.owner_id == member_id {
             info!("Cannot rename owner in guild {}.", guild.name);
             return true;
         }
 
-        let prepared_guilds = self.prepared_guilds.lock().await;
-
-        let Some(prepared_guild) = prepared_guilds.get(&guild.id) else {
-            error!("Guild not prepared properly {}.", guild.name);
-            return false;
-        };
+        /*
 
         let all_roles: &Vec<RoleId> = &prepared_guild.values().cloned().collect();
 
@@ -126,6 +179,18 @@ impl DiscordBot {
             .into_iter()
             .filter(|role| !all_roles.contains(role))
             .collect();
+
+         */
+
+        let mut target_roles = target_member.roles;
+
+        let guild_roles = &guild.roles;
+
+        for (key, role) in guild_roles.iter() {
+            if ALL_ROLES.contains(&&*role.name) && target_roles.contains(key) {
+                target_roles.retain(|&x| x.get() != key.get());
+            }
+        }
 
         if role.is_some() {
             target_roles.push(role.unwrap());
@@ -146,124 +211,25 @@ impl DiscordBot {
 
     }
 
-    async fn parse_user(&self, user: &User, player: Player) {
-
-        let Some(level) = player.get_player_skill_level() else {
-            error!("Could not get player skill level!");
-            return;
-        };
-        let Some(elo) = player.get_player_elo() else {
-            error!("Could not get player elo!");
-            return;
-        };
-
-        let suggested_name: &str = &format!("({} ELO) {}", elo, player.nickname);
-
-        let all_roles: Vec<&str> = vec![
-            "Level 1 (1-800 ELO)",
-            "Level 2 (801-950 ELO)",
-            "Level 3 (951-1100 ELO)",
-            "Level 4 (1101-1250 ELO)",
-            "Level 5 (1251-1400 ELO)",
-            "Level 6 (1401-1550 ELO)",
-            "Level 7 (1551-1700 ELO)",
-            "Level 8 (1701-1850 ELO)",
-            "Level 9 (1851-2000 ELO)",
-            "Level 10 (2001+ ELO)",
-        ];
-
-        let suggested_role: &str = all_roles.get(level - 1).unwrap_or(&"");
-
-        let guilds = self.guilds.lock().await;
-
-        for (_guild_id, guild) in guilds.iter() {
-            info!("Attempting to edit user in guild {}.", guild.name);
-
-            let success;
-
-            match guild.role_by_name(suggested_role) {
-                None => {
-                    success = self.edit_member(guild, user.id, suggested_name, None).await;
-                }
-                Some(role) => {
-                    info!("{}", format!("Role id: {}", role.id));
-                    success = self.edit_member(guild, user.id, suggested_name, Some(role.id)).await;
-                }
-            }
-
-            if success {
-                info!("Renamed user in guild {} successfully.", guild.name);
-            } else {
-                error!("Error attempting to edit user in guild {}.", guild.name);
-            }
-        }
-
-    }
-
-    async fn name_syncer(&self) {
-
-        info!("Starting name sync task");
-
-        loop {
-
-            let db = self.database.lock().await;
-
-            let Ok(users) = db.fetch_users().await else {
-                error!("Could not get users from database");
-                sleep(Duration::from_secs(2)).await;
-                continue;
-            };
-
-            drop(db);
-
-            for user in users.iter() {
-                println!("{}", user.discord_id);
-            }
-
-            info!("Name sync resting for 2 seconds.");
-            sleep(Duration::from_secs(2)).await;
-        }
-    }
-
 }
 
 #[async_trait]
 impl EventHandler for DiscordBot {
-    async fn guild_create(&self, ctx: Context, guild: Guild, is_new: Option<bool>) {
+    async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: Option<bool>) {
 
         info!("Connection to guild '{}' established!", guild.name);
 
-        let mut prepared_guilds = self.prepared_guilds.lock().await;
-        let mut guilds = self.guilds.lock().await;
+        let success = prepare_guild(ctx, &guild).await;
 
-        if prepared_guilds.contains_key(&guild.id) {
-            info!("Guild '{}' already prepared!", guild.name);
-            return;
-        }
-
-        let guild_roles = prepare_guild(ctx, &guild).await;
-
-        match guild_roles {
-            Some(value) => {
-                prepared_guilds.insert(guild.id, value);
-                guilds.insert(guild.id, guild);
-                info!("Guild prepared successfully. Total number of prepared guilds: {}", prepared_guilds.len());
-            },
-            None => {
-                error!("Failed to prepare guild '{}'", guild.name)
-            },
+        if success {
+            info!("Guild {} prepared successfully!", guild.name);
+        } else {
+            error!("Guild {} could not be prepared successfully!", guild.name);
         }
 
     }
 
-    async fn guild_delete(&self, ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
-
-        let mut prepared_guilds = self.prepared_guilds.lock().await;
-        let mut guilds = self.guilds.lock().await;
-
-        if !prepared_guilds.contains_key(&incomplete.id) {
-            return;
-        }
+    async fn guild_delete(&self, _ctx: Context, incomplete: UnavailableGuild, full: Option<Guild>) {
 
         let guild_identifier;
 
@@ -279,11 +245,6 @@ impl EventHandler for DiscordBot {
             info!("Kicked from guild '{}'!", guild_identifier);
         }
 
-        prepared_guilds.remove(&incomplete.id);
-        guilds.remove(&incomplete.id);
-
-        info!("Guild '{}' removed from prepared list!", guild_identifier);
-
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
@@ -295,21 +256,23 @@ impl EventHandler for DiscordBot {
 
         if msg.content == "!status" {
 
-            let data = self.prepared_guilds.lock().await;
-            let db = self.database.lock().await;
-            let Ok(user_count) = db.count_users().await else {
+            let Ok(user_count) = Database.count_users().await else {
                 error!("Error counting users");
                 return;
             };
-            if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", data.len(), user_count)).await {
+
+            let Ok(guilds) = ctx.http.get_guilds(None, Some(100)).await else {
+                error!("Error attempting to get guilds.");
+                return;
+            };
+
+            if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", guilds.len(), user_count)).await {
                 error!("Error sending message: {:?}", e);
             }
 
         } else if msg.content == "!unlink" {
 
-            let db = self.database.lock().await;
-
-            let Ok(exists) = db.user_exists(msg.author.id.to_string()).await else {
+            let Ok(exists) = Database.user_exists(msg.author.id.to_string()).await else {
                 error!("Error checking if user exists");
                 return;
             };
@@ -321,7 +284,7 @@ impl EventHandler for DiscordBot {
                 return;
             }
 
-            let Ok(success) = db.unlink_user(msg.author.id.to_string()).await else {
+            let Ok(success) = Database.unlink_user(msg.author.id.to_string()).await else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
                 }
@@ -334,7 +297,7 @@ impl EventHandler for DiscordBot {
                     error!("Error sending message: {:?}", e);
                 }
                 info!("Attempting to clear nickname in all relevant guilds.");
-                self.clear_user(msg.author.id);
+                self.clear_user(&ctx.http, msg.author.id);
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
@@ -378,15 +341,12 @@ impl EventHandler for DiscordBot {
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
-        let mut http = self.http.lock().await;
-        *http = Some(ctx.http.clone());
-
         info!("{} is connected!", ready.user.name);
     }
 
 }
 
-async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static str, RoleId>> {
+async fn prepare_guild(ctx: Context, guild: &Guild) -> bool {
 
     info!("Preparing guild '{}' with ID '{}'!", guild.name, guild.id);
 
@@ -425,7 +385,7 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
                 },
                 Err(e) => {
                     error!("Failed to create role in guild '{}' reason: {}", guild.name, e);
-                    return None;
+                    return false;
                 },
             }
         }
@@ -433,6 +393,6 @@ async fn prepare_guild(ctx: Context, guild: &Guild) -> Option<HashMap<&'static s
 
     info!("Guild prepared!");
 
-    Some(actual_roles)
+    true
 
 }
