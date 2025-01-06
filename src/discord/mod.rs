@@ -32,9 +32,9 @@ const ALL_ROLES: &[&str] = &[
 
 impl DiscordBot {
 
-    pub async fn link_user(&self, parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
+    pub async fn link_user(parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
 
-        let Some(player_data) = Faceit.get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
+        let Some(player_data) = Faceit::get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
             msg.channel_id.say(&ctx.http, "Faceit account not found.").await?;
             return Ok(false);
         };
@@ -48,12 +48,12 @@ impl DiscordBot {
 
         let success = Database.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
 
-        let _ = self.parse_user(&ctx.http, &msg.author, player_data);
+        let _ = Self::parse_user(&ctx.http, msg.author.id, player_data);
 
         Ok(success)
     }
 
-    pub async fn clear_user(&self, http: &Arc<Http>, discord_id: UserId) -> () {
+    pub async fn clear_user(http: &Arc<Http>, discord_id: UserId) -> () {
 
         let Ok(guilds) = http.get_guilds(None, Some(100)).await else {
             error!("Error attempting to get guilds.");
@@ -68,7 +68,7 @@ impl DiscordBot {
             };
 
             info!("Attempting to edit user in guild {}.", guild.name);
-            let success = self.edit_member(&http, &guild, discord_id, "", None).await;
+            let success = Self::edit_member(&http, &guild, discord_id, "", None).await;
             if success {
                 info!("Edited user in guild {} successfully.", guild.name);
             } else {
@@ -78,7 +78,7 @@ impl DiscordBot {
 
     }
 
-    pub async fn parse_user(&self, http: &Arc<Http>, user: &User, player: Player) {
+    pub async fn parse_user(http: &Arc<Http>, user_id: UserId, player: Player) {
 
         let Some(level) = player.get_player_skill_level() else {
             error!("Could not get player skill level!");
@@ -111,11 +111,10 @@ impl DiscordBot {
 
             match guild.role_by_name(suggested_role) {
                 None => {
-                    success = self.edit_member(&http, &guild, user.id, suggested_name, None).await;
+                    success = Self::edit_member(http, &guild, user_id, suggested_name, None).await;
                 }
                 Some(role) => {
-                    info!("{}", format!("Role id: {}", role.id));
-                    success = self.edit_member(&http, &guild, user.id, suggested_name, Some(role.id)).await;
+                    success = Self::edit_member(http, &guild, user_id, suggested_name, Some(role.id)).await;
                 }
             }
 
@@ -128,16 +127,11 @@ impl DiscordBot {
 
     }
 
-    async fn edit_member(&self, http: &Arc<Http>, guild: &PartialGuild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
+    async fn edit_member(http: &Arc<Http>, guild: &PartialGuild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
 
         let Ok(target_member) = guild.member(&http, &member_id).await else {
             info!("User not in guild {}.", guild.name);
             return true;
-        };
-
-        let Ok(current_user) = http.get_current_user().await else {
-            error!("Error getting current user");
-            return false;
         };
 
         /*
@@ -146,6 +140,11 @@ impl DiscordBot {
         You can access channels using a partial guild using guild.channels
         This returns a hashmap, I could get a channel ID from there.
         But that feels so clunky...
+
+        let Ok(current_user) = http.get_current_user().await else {
+            error!("Error getting current user");
+            return false;
+        };
 
         let Ok(guild_user) = guild.member(http, current_user.id).await else {
             error!("Error getting current user guild member object");
@@ -164,7 +163,7 @@ impl DiscordBot {
             return false;
         }
 
-         */
+        */
 
         if guild.owner_id == member_id {
             info!("Cannot rename owner in guild {}.", guild.name);
@@ -297,7 +296,7 @@ impl EventHandler for DiscordBot {
                     error!("Error sending message: {:?}", e);
                 }
                 info!("Attempting to clear nickname in all relevant guilds.");
-                self.clear_user(&ctx.http, msg.author.id);
+                Self::clear_user(&ctx.http, msg.author.id);
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
@@ -317,7 +316,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match self.link_user(&parsed_username, &ctx, &msg).await {
+            match Self::link_user(&parsed_username, &ctx, &msg).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully linked user: {}", msg.author.name);
@@ -340,7 +339,7 @@ impl EventHandler for DiscordBot {
 
     }
 
-    async fn ready(&self, ctx: Context, ready: Ready) {
+    async fn ready(&self, _ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
     }
 

@@ -43,15 +43,29 @@ impl Player {
 
 impl Faceit {
 
-    pub async fn get_faceit_user_by_id() {
-        println!("Hello from my_module!");
+    pub async fn get_faceit_user_by_id(faceit_id: &String) -> Result<Option<Player>, Error> {
+
+        let url = format!("https://open.faceit.com/data/v4/players/{}", faceit_id);
+
+        let results = Self::faceit_api_query(url).await?;
+
+        Ok(results)
+
     }
 
-    pub async fn get_faceit_user_by_nickname(&self, username: String) -> Result<Option<Player>, Error> {
-
-        let token = env::var("FACEIT_TOKEN").expect("Failed to get FACEIT_TOKEN!");
+    pub async fn get_faceit_user_by_nickname(username: String) -> Result<Option<Player>, Error> {
 
         let url = format!("https://open.faceit.com/data/v4/players?nickname={}&game=cs2", username);
+
+        let results = Self::faceit_api_query(url).await?;
+
+        Ok(results)
+
+    }
+
+    async fn faceit_api_query(url: String) -> Result<Option<Player>, Error>{
+
+        let token = env::var("FACEIT_TOKEN").expect("Failed to get FACEIT_TOKEN!");
 
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", token))?);

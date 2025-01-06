@@ -15,8 +15,8 @@ pub struct LinkedUser {
 
 impl LinkedUser {
     fn from_row(row: &Row) -> Result<Self, Box<dyn std::error::Error>> {
-        let faceit_id: String = row.get(1)?;
-        let discord_id: String = row.get(0)?;
+        let faceit_id: String = row.get(0)?;
+        let discord_id: String = row.get(1)?;
         Ok(LinkedUser { faceit_id, discord_id })
     }
 }
