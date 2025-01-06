@@ -171,7 +171,24 @@ impl DiscordBot {
             return;
         };
 
-        info!("Parsing user! Skill level: '{}' elo: '{}'", level, elo);
+        let suggested_name = format!("({} ELO) {}", elo, player.nickname);
+
+        let all_roles: Vec<&str> = vec![
+            "Level 1 (1-800 ELO)",
+            "Level 2 (801-950 ELO)",
+            "Level 3 (951-1100 ELO)",
+            "Level 4 (1101-1250 ELO)",
+            "Level 5 (1251-1400 ELO)",
+            "Level 6 (1401-1550 ELO)",
+            "Level 7 (1551-1700 ELO)",
+            "Level 8 (1701-1850 ELO)",
+            "Level 9 (1851-2000 ELO)",
+            "Level 10 (2001+ ELO)",
+        ];
+
+        let suggested_role: &str = all_roles.get(level - 1).unwrap_or(&"");
+
+
     }
 
 }

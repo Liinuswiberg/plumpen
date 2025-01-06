@@ -15,6 +15,7 @@ pub struct Player {
 }
 
 impl Player {
+
     pub fn get_player_elo(&self) -> Option<String> {
         let Some(cs2_data) = self.games.get("cs2") else {
             return None;
@@ -24,15 +25,21 @@ impl Player {
         };
         Some(cs2_elo.to_string())
     }
-    pub fn get_player_skill_level(&self) -> Option<String> {
+
+    pub fn get_player_skill_level(&self) -> Option<usize> {
         let Some(cs2_data) = self.games.get("cs2") else {
             return None;
         };
-        let Some(cs2_skilllevel) = cs2_data.get("skill_level") else {
+        let Some(cs2_skill_level) = cs2_data.get("skill_level") else {
             return None;
         };
-        Some(cs2_skilllevel.to_string())
+
+        match cs2_skill_level.to_string().parse::<usize>() {
+            Ok(number) => Some(number),
+            Err(e) => None,
+        }
     }
+
 }
 
 impl Faceit {
