@@ -51,47 +51,39 @@ impl DiscordBot {
 
         let success = db.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
 
-        Self::parse_user(&msg.author, player_data).await;
+        let _ = self.parse_user(&msg.author, player_data);
 
         Ok(success)
     }
 
-    pub async fn clear_nickname(&self, discord_id: UserId) -> Result<bool, Error> {
+    pub async fn clear_user(&self, discord_id: UserId) -> () {
 
-        let http = self.http.lock().await;
+        let guilds = self.guilds.lock().await;
 
-        let deference = http.as_ref();
-
-        match deference {
-            Some(http) => {
-
-                let guilds = self.guilds.lock().await;
-
-                for (_guild_id, guild) in guilds.iter() {
-
-                    info!("Attempting to rename user in guild {}.", guild.name);
-                    let success = self.edit_member(http, guild, discord_id, "", None).await;
-                    if success {
-                        info!("Renamed user in guild {} successfully.", guild.name);
-                    }
-
-                }
-            }
-            _ => {
-                error!("Failed to borrow Discord HTTP.");
-                return Err(anyhow::anyhow!("Failed to borrow Discord HTTP"))
+        for (_guild_id, guild) in guilds.iter() {
+            info!("Attempting to edit user in guild {}.", guild.name);
+            let success = self.edit_member(guild, discord_id, "", None).await;
+            if success {
+                info!("Edited user in guild {} successfully.", guild.name);
+            } else {
+                error!("Error attempting to edit user in guild {}.", guild.name);
             }
         }
 
-        Ok(true)
-
     }
 
-    async fn edit_member(&self, http: &Arc<Http>, guild: &Guild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
+    async fn edit_member(&self, guild: &Guild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
+
+        let lock = self.http.lock().await;
+
+        let Some(http) = lock.as_ref() else {
+            error!("Failed to borrow Discord HTTP.");
+            return false;
+        };
 
         let Ok(target_member) = guild.member(http, &member_id).await else {
             info!("User not in guild {}.", guild.name);
-            return false;
+            return true;
         };
 
         let Ok(current_user) = http.get_current_user().await else {
@@ -117,7 +109,7 @@ impl DiscordBot {
         }
         if guild.owner_id == member_id {
             info!("Cannot rename owner in guild {}.", guild.name);
-            return false;
+            return true;
         }
 
         let prepared_guilds = self.prepared_guilds.lock().await;
@@ -138,13 +130,6 @@ impl DiscordBot {
             target_roles.push(role.unwrap());
         }
 
-        let all_roles: &Vec<RoleId> = &prepared_guild.values().cloned().collect();
-
-        let target_roles: Vec<RoleId> = target_member.roles.clone()
-            .into_iter()
-            .filter(|role| !all_roles.contains(role))
-            .collect();
-
         let result = guild.edit_member(http, member_id, EditMember::new().nickname(new_name).roles(target_roles)).await;
 
         match result {
@@ -160,7 +145,7 @@ impl DiscordBot {
 
     }
 
-    async fn parse_user(user: &User, player: Player) {
+    async fn parse_user(&self, user: &User, player: Player) {
 
         let Some(level) = player.get_player_skill_level() else {
             error!("Could not get player skill level!");
@@ -171,7 +156,7 @@ impl DiscordBot {
             return;
         };
 
-        let suggested_name = format!("({} ELO) {}", elo, player.nickname);
+        let suggested_name: &str = &format!("({} ELO) {}", elo, player.nickname);
 
         let all_roles: Vec<&str> = vec![
             "Level 1 (1-800 ELO)",
@@ -188,6 +173,29 @@ impl DiscordBot {
 
         let suggested_role: &str = all_roles.get(level - 1).unwrap_or(&"");
 
+        let guilds = self.guilds.lock().await;
+
+        for (_guild_id, guild) in guilds.iter() {
+            info!("Attempting to edit user in guild {}.", guild.name);
+
+            let success;
+
+            match guild.role_by_name(suggested_role) {
+                None => {
+                    success = self.edit_member(guild, user.id, suggested_name, None).await;
+                }
+                Some(role) => {
+                    info!("{}", format!("Role id: {}", role.id));
+                    success = self.edit_member(guild, user.id, suggested_name, Some(role.id)).await;
+                }
+            }
+
+            if success {
+                info!("Renamed user in guild {} successfully.", guild.name);
+            } else {
+                error!("Error attempting to edit user in guild {}.", guild.name);
+            }
+        }
 
     }
 
@@ -299,9 +307,8 @@ impl EventHandler for DiscordBot {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully unlinked user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
                 }
-                if let Err(e) = self.clear_nickname(msg.author.id).await {
-                    error!("Error clearing nickname: {:?}", e);
-                };
+                info!("Attempting to clear nickname in all relevant guilds.");
+                self.clear_user(msg.author.id);
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
