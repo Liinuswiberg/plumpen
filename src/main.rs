@@ -2,7 +2,6 @@ mod database;
 mod discord;
 mod faceit;
 
-use anyhow::Context as _;
 use serenity::prelude::*;
 use shuttle_runtime::SecretStore;
 use discord::DiscordBot;
@@ -11,20 +10,25 @@ use crate::database::Database;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
-use serenity::all::{Http, UserId};
+use serenity::all::{GuildId, Http, UserId};
 use tokio::time::sleep;
 use tracing::{error, info};
 use crate::faceit::Player;
+use poise::serenity_prelude::{ClientBuilder, GatewayIntents};
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type PoiseContext<'a> = poise::Context<'a, Data, Error>;
+struct Data {}
 
 #[shuttle_runtime::main]
 async fn serenity(
     #[shuttle_runtime::Secrets] secrets: SecretStore,
 ) -> shuttle_serenity::ShuttleSerenity {
 
-    std::env::set_var("TURSO_TOKEN", secrets.get("TURSO_TOKEN").context("'TURSO_TOKEN' was not found")?);
-    std::env::set_var("TURSO_DATABASE", secrets.get("TURSO_DATABASE").context("'TURSO_DATABASE' was not found")?);
-    std::env::set_var("FACEIT_TOKEN", secrets.get("FACEIT_TOKEN").context("'FACEIT_TOKEN' was not found")?);
-    std::env::set_var("BOT_OWNER", secrets.get("BOT_OWNER").context("'BOT_OWNER' was not found")?);
+    std::env::set_var("TURSO_TOKEN", secrets.get("TURSO_TOKEN").expect("'TURSO_TOKEN' was not found"));
+    std::env::set_var("TURSO_DATABASE", secrets.get("TURSO_DATABASE").expect("'TURSO_DATABASE' was not found"));
+    std::env::set_var("FACEIT_TOKEN", secrets.get("FACEIT_TOKEN").expect("'FACEIT_TOKEN' was not found"));
+    std::env::set_var("BOT_OWNER", secrets.get("BOT_OWNER").expect("'BOT_OWNER' was not found"));
 
     let intents = GatewayIntents::GUILD_MEMBERS |
         GatewayIntents::GUILD_MESSAGES |
@@ -32,7 +36,23 @@ async fn serenity(
         GatewayIntents::MESSAGE_CONTENT |
         GatewayIntents::GUILDS;
 
-    let client = Client::builder(secrets.get("DISCORD_TOKEN").context("'DISCORD_TOKEN' was not found")?, intents)
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            commands: vec![discord::commands::help(), discord::commands::link()],
+            ..Default::default()
+        })
+        .setup(|ctx, _ready, framework| {
+            Box::pin(async move {
+                poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::new(1325921171417596006)).await?;
+                Ok(Data {})
+            })
+        })
+        .build();
+
+//poise::builtins::register_in_guild()
+    //poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+    let client = Client::builder(secrets.get("DISCORD_TOKEN").expect("'DISCORD_TOKEN' was not found"), intents)
+        .framework(framework)
         .event_handler(DiscordBot)
         .await
         .expect("Err creating client");

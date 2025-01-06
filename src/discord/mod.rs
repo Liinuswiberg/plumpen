@@ -1,7 +1,9 @@
+pub(crate) mod commands;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User, PartialGuild, Channel};
+use serenity::all::{Channel, Context, EditRole, ErrorResponse, EventHandler, Guild, GuildId, Http, Member, Message, PartialGuild, Ready, Role, RoleId, UnavailableGuild, User, UserId};
 use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
@@ -9,14 +11,14 @@ use std::sync::Arc;
 use std::{env, thread};
 use std::future::Future;
 use anyhow::Error;
+use poise::Command;
 use tokio::time::sleep;
 use tracing::{error, info};
 use regex::Regex;
 use serenity::builder::EditMember;
+use crate::{Data, PoiseContext};
 use crate::database::Database;
 use crate::faceit::{Faceit, Player};
-
-pub struct DiscordBot;
 
 const ALL_ROLES: &[&str] = &[
     "Level 1 (1-800 ELO)",
@@ -31,13 +33,15 @@ const ALL_ROLES: &[&str] = &[
     "Level 10 (2001+ ELO)",
 ];
 
+pub struct DiscordBot;
+
 impl DiscordBot {
 
-    pub async fn link_user(parsed_username: &String, ctx: &Context, discord_id: UserId, msg: Option<&Message>) -> Result<bool, Error>{
+    pub async fn link_user(parsed_username: &String, http: Arc<Http>, discord_id: UserId, poise_ctx: Option<&PoiseContext>) -> Result<bool, Error>{
 
         let Some(player_data) = Faceit::get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
-            if msg.is_some() {
-                msg.unwrap().channel_id.say(&ctx.http, "Faceit account not found.").await?;
+            if let Some(px) = poise_ctx {
+                px.say("Faceit account not found.").await?;
             }
             return Ok(false);
         };
@@ -45,22 +49,22 @@ impl DiscordBot {
         let exists = Database.user_exists(discord_id.to_string()).await?;
 
         if exists {
-            if msg.is_some() {
-                msg.unwrap().channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
+            if let Some(px) = poise_ctx {
+                px.say("User already linked, unlink using '!unlink'.").await?;
             }
             return Ok(false);
         };
 
         if let None = player_data.get_player_skill_level() {
-            if let Some(msg) = msg {
-                msg.channel_id.say(&ctx.http, "User has not played CS2 on Faceit.").await?;
+            if let Some(px) = poise_ctx {
+                px.say("User has not played CS2 on Faceit.").await?;
             }
             return Ok(false);
         }
 
         let success = Database.add_user(player_data.player_id.to_string(),discord_id.to_string()).await?;
 
-        Self::parse_user(&ctx.http, discord_id, player_data).await;
+        Self::parse_user(http, discord_id, player_data).await;
 
         Ok(success)
     }
@@ -287,7 +291,7 @@ impl EventHandler for DiscordBot {
             return;
         };
 
-        let is_owner = msg.author.id != owner_u64_id;
+        let not_owner = msg.author.id != owner_u64_id;
 
         if msg.content == "!status" {
 
@@ -307,7 +311,7 @@ impl EventHandler for DiscordBot {
 
         } else if msg.content == "!guilds" {
 
-            if is_owner {
+            if not_owner {
                 if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
                     error!("Error sending message: {:?}", e);
                 }
@@ -331,7 +335,7 @@ impl EventHandler for DiscordBot {
 
         } else if msg.content == "!restore" {
 
-            if is_owner {
+            if not_owner {
                 if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
                     error!("Error sending message: {:?}", e);
                 }
@@ -389,7 +393,7 @@ impl EventHandler for DiscordBot {
                         continue;
                     }
 
-                    let result = Self::link_user(&parsed_username, &ctx, member.user.id, None).await;
+                    let result = Self::link_user(&parsed_username, &ctx.http, member.user.id, None).await;
 
                     match result {
                         Ok(success) => {
@@ -459,7 +463,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match Self::link_user(&parsed_username, &ctx, msg.author.id, Some(&msg)).await {
+            match Self::link_user(&parsed_username, &ctx.http, msg.author.id, Some(&msg)).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully linked user: {}", msg.author.name);
@@ -480,7 +484,7 @@ impl EventHandler for DiscordBot {
 
         } else if let Some(caps) = force_link_regex.captures(&*msg.content) {
 
-            if is_owner {
+            if not_owner {
                 if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
                     error!("Error sending message: {:?}", e);
                 }
@@ -509,7 +513,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match Self::link_user(&parsed_username, &ctx, UserId::new(u64_id), Some(&msg)).await {
+            match Self::link_user(&parsed_username, &ctx.http, UserId::new(u64_id), Some(&msg)).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully force linked user: {}", parsed_discord_id);
@@ -530,7 +534,7 @@ impl EventHandler for DiscordBot {
 
         } else if let Some(caps) = force_unlink_regex.captures(&*msg.content) {
 
-            if is_owner {
+            if not_owner {
                 if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
                     error!("Error sending message: {:?}", e);
                 }

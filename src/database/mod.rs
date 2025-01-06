@@ -2,7 +2,7 @@ use std::env;
 use anyhow::Error;
 use libsql::{Builder, Row};
 use serenity::all::User;
-use tracing::{info, error};
+use tracing::{error, info};
 use serde::{Deserialize, Serialize};
 
 pub struct Database;
