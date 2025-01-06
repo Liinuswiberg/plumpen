@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse};
+use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User};
 use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
@@ -12,7 +12,7 @@ use tracing::{error, info};
 use regex::Regex;
 use serenity::builder::EditMember;
 use crate::database::Database;
-use crate::faceit::Faceit;
+use crate::faceit::{Faceit, Player};
 
 pub struct DiscordBot{
     prepared_guilds: Arc<Mutex<HashMap<GuildId, HashMap<&'static str, RoleId>>>>,
@@ -50,6 +50,8 @@ impl DiscordBot {
         };
 
         let success = db.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
+
+        Self::parse_user(&msg.author, player_data).await;
 
         Ok(success)
     }
@@ -156,6 +158,20 @@ impl DiscordBot {
             }
         }
 
+    }
+
+    async fn parse_user(user: &User, player: Player) {
+
+        let Some(level) = player.get_player_skill_level() else {
+            error!("Could not get player skill level!");
+            return;
+        };
+        let Some(elo) = player.get_player_elo() else {
+            error!("Could not get player elo!");
+            return;
+        };
+
+        info!("Parsing user! Skill level: '{}' elo: '{}'", level, elo);
     }
 
 }

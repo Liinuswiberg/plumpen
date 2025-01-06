@@ -14,6 +14,27 @@ pub struct Player {
     games: serde_json::Map<String, serde_json::Value>,
 }
 
+impl Player {
+    pub fn get_player_elo(&self) -> Option<String> {
+        let Some(cs2_data) = self.games.get("cs2") else {
+            return None;
+        };
+        let Some(cs2_elo) = cs2_data.get("faceit_elo") else {
+            return None;
+        };
+        Some(cs2_elo.to_string())
+    }
+    pub fn get_player_skill_level(&self) -> Option<String> {
+        let Some(cs2_data) = self.games.get("cs2") else {
+            return None;
+        };
+        let Some(cs2_skilllevel) = cs2_data.get("skill_level") else {
+            return None;
+        };
+        Some(cs2_skilllevel.to_string())
+    }
+}
+
 impl Faceit {
     pub fn new(token: String) -> Self {
         Self {
