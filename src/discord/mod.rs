@@ -32,23 +32,34 @@ const ALL_ROLES: &[&str] = &[
 
 impl DiscordBot {
 
-    pub async fn link_user(parsed_username: &String, ctx: &Context, discord_id: UserId, msg: &Message) -> Result<bool, Error>{
+    pub async fn link_user(parsed_username: &String, ctx: &Context, discord_id: UserId, msg: Option<&Message>) -> Result<bool, Error>{
 
         let Some(player_data) = Faceit::get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
-            msg.channel_id.say(&ctx.http, "Faceit account not found.").await?;
+            if msg.is_some() {
+                msg.unwrap().channel_id.say(&ctx.http, "Faceit account not found.").await?;
+            }
             return Ok(false);
         };
 
         let exists = Database.user_exists(discord_id.to_string()).await?;
 
         if exists {
-            msg.channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
+            if msg.is_some() {
+                msg.unwrap().channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
+            }
             return Ok(false);
         };
 
+        if let None = player_data.get_player_skill_level() {
+            if let Some(msg) = msg {
+                msg.channel_id.say(&ctx.http, "User has not played CS2 on Faceit.").await?;
+            }
+            return Ok(false);
+        }
+
         let success = Database.add_user(player_data.player_id.to_string(),discord_id.to_string()).await?;
 
-        let _ = Self::parse_user(&ctx.http, discord_id, player_data);
+        Self::parse_user(&ctx.http, discord_id, player_data).await;
 
         Ok(success)
     }
@@ -67,25 +78,27 @@ impl DiscordBot {
                 continue;
             };
 
-            info!("Attempting to edit user in guild {}.", guild.name);
             let success = Self::edit_member(&http, &guild, discord_id, "", None).await;
             if success {
-                info!("Edited user in guild {} successfully.", guild.name);
+                //info!("Edited user in guild {} successfully.", guild.name);
             } else {
                 error!("Error attempting to edit user in guild {}.", guild.name);
             }
+
+            sleep(Duration::from_millis(30)).await;
+
         }
 
     }
 
     pub async fn parse_user(http: &Arc<Http>, user_id: UserId, player: Player) {
 
+        // These might get triggered if user hasn't played cs2.
         let Some(level) = player.get_player_skill_level() else {
-            error!("Could not get player skill level!");
+            error!("Unlinked user {} {:#?}", user_id, player);
             return;
         };
         let Some(elo) = player.get_player_elo() else {
-            error!("Could not get player elo!");
             return;
         };
 
@@ -105,7 +118,7 @@ impl DiscordBot {
                 continue;
             };
 
-            info!("Attempting to edit user in guild {}.", guild.name);
+            //info!("Attempting to edit user in guild {}.", guild.name);
 
             let success;
 
@@ -119,18 +132,25 @@ impl DiscordBot {
             }
 
             if success {
-                info!("Renamed user in guild {} successfully.", guild.name);
+                //info!("Renamed user in guild {} successfully.", guild.name);
             } else {
                 error!("Error attempting to edit user in guild {}.", guild.name);
             }
+
+            sleep(Duration::from_millis(30)).await;
+
         }
 
     }
 
     async fn edit_member(http: &Arc<Http>, guild: &PartialGuild, member_id: UserId, new_name: &str, role: Option<RoleId>) -> bool {
 
+        // @TODO: Make this return a result. Result<bool, Error>. As "false" should be returned
+        // if no edits were made. But now true is returned if no edits were made but user wasn't in guild.
+        // Which works. But its rather ugly.
+
         let Ok(target_member) = guild.member(&http, &member_id).await else {
-            info!("User not in guild {}.", guild.name);
+            //info!("User not in guild {}.", guild.name);
             return true;
         };
 
@@ -199,7 +219,7 @@ impl DiscordBot {
 
         match result {
             Ok(_) => {
-                info!("Successfully edited guild member '{}' in guild '{}'.", member_id, guild.name);
+                //info!("Successfully edited guild member '{}' in guild '{}'.", member_id, guild.name);
                 true
             },
             Err(e) => {
@@ -251,9 +271,10 @@ impl EventHandler for DiscordBot {
         // Debug
         info!(msg.content);
 
-        let link_regex = Regex::new(r"^!link (\S+)$").unwrap();
-        let force_link_regex = Regex::new(r"^!forcelink\s+(\w+)\s+(\d+)$").unwrap();
+        let link_regex = Regex::new(r"^!link ([A-Za-z0-9-_]+)$").unwrap();
+        let force_link_regex = Regex::new(r"^!forcelink\s+([\w-]+)\s+(\d+)$").unwrap();
         let force_unlink_regex = Regex::new(r"^!forceunlink\s+(\w+)$").unwrap();
+        let refresh_regex = Regex::new(r"\(\d+ ELO\)\s+([A-Za-z0-9-_]+)").unwrap();
 
         let owner = env::var("BOT_OWNER").expect("Failed to get BOT_OWNER!");
 
@@ -277,6 +298,89 @@ impl EventHandler for DiscordBot {
             };
 
             if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", guilds.len(), user_count)).await {
+                error!("Error sending message: {:?}", e);
+            }
+
+        } else if msg.content == "!restore" {
+
+            if is_owner {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            info!("Attempting to restore user links from member nicknames");
+
+            let Ok(guilds) = ctx.http.get_guilds(None, Some(100)).await else {
+                error!("Error attempting to get guilds.");
+                return;
+            };
+
+            let mut counter = 0;
+            let mut error_counter = 0;
+            let mut add_counter = 0;
+            let mut total_counter = 0;
+
+            for guild_info in guilds.iter() {
+
+                let Ok(guild) = ctx.http.get_guild(guild_info.id).await else {
+                    error!("Error attempting to get guild.");
+                    continue;
+                };
+
+                let Ok(members) = guild.members(&ctx.http, None, None).await else {
+                    error!("Could not get members from guild {}.", guild.name);
+                    continue;
+                };
+
+                for member in members.iter() {
+
+                    total_counter += 1;
+
+                    let Some(nickname) = &member.nick else {
+                        continue;
+                    };
+
+                    let Some(caps) = refresh_regex.captures(nickname) else {
+                        continue;
+                    };
+
+                    let Some(username) = caps.get(1) else {
+                        error!("Error getting username from regex capture");
+                        continue;
+                    };
+
+                    let parsed_username = username.as_str().to_string();
+
+                    counter += 1;
+
+                    if !nickname.ends_with(parsed_username.as_str()) {
+                        error_counter += 1;
+                        error!("Issue with regex found, missed '{}', captured: '{}'", nickname, parsed_username);
+                        continue;
+                    }
+
+                    let result = Self::link_user(&parsed_username, &ctx, member.user.id, None).await;
+
+                    match result {
+                        Ok(success) => {
+                            if success {
+                                add_counter += 1;
+                            }
+                        }
+                        Err(_) => {
+                            error_counter += 1;
+                            error!("Error when linking user '{}' to faceit account '{}'", member.user.name, parsed_username);
+                        }
+                    }
+
+                }
+
+            }
+
+            info!("Restore complete");
+            if let Err(e) = msg.channel_id.say(&ctx.http,format!("Restore complete. Total: {}, Assumed: {}, Added: {}, Errors: {}", total_counter, counter, add_counter, error_counter)).await {
                 error!("Error sending message: {:?}", e);
             }
 
@@ -327,7 +431,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match Self::link_user(&parsed_username, &ctx, msg.author.id, &msg).await {
+            match Self::link_user(&parsed_username, &ctx, msg.author.id, Some(&msg)).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully linked user: {}", msg.author.name);
@@ -377,7 +481,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match Self::link_user(&parsed_username, &ctx, UserId::new(u64_id), &msg).await {
+            match Self::link_user(&parsed_username, &ctx, UserId::new(u64_id), Some(&msg)).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully force linked user: {}", parsed_discord_id);

@@ -55,14 +55,19 @@ async fn name_syncer(http: Arc<Http>) {
             continue;
         };
 
+        info!("Got {} users from database, starting name sync.", users.len());
+
         for user in users.iter() {
             let Ok(player) = Faceit::get_faceit_user_by_id(&user.faceit_id).await else { continue };
+
 
             match player {
                 None => {
                     info!("No player data for user '{}'", user.faceit_id);
                 }
                 Some(p) => {
+
+                    info!("Syncing user '{}'.", p.nickname);
 
                     let Ok(u64_id) = user.discord_id.parse::<u64>() else {
                         continue;
@@ -72,8 +77,7 @@ async fn name_syncer(http: Arc<Http>) {
                 }
             }
 
-            info!("Name sync resting for 0.25 seconds.");
-            sleep(Duration::from_millis(250)).await;
+            sleep(Duration::from_millis(70)).await;
 
         }
 
