@@ -1,9 +1,25 @@
 use anyhow::Error;
-use libsql::Builder;
-use tracing::{info};
+use libsql::{Builder, Row};
+use serenity::all::User;
+use tracing::{info, error};
+use serde::{Deserialize, Serialize};
 
 pub struct Database {
     db: libsql::Database,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LinkedUser {
+    pub faceit_id: String,
+    pub discord_id: String,
+}
+
+impl LinkedUser {
+    fn from_row(row: &Row) -> Result<Self, Box<dyn std::error::Error>> {
+        let faceit_id: String = row.get(1)?;
+        let discord_id: String = row.get(0)?;
+        Ok(LinkedUser { faceit_id, discord_id })
+    }
 }
 
 impl Database {
@@ -70,6 +86,26 @@ impl Database {
 
         Err(anyhow::anyhow!("Failed to count rows"))
 
+    }
+
+    pub async fn fetch_users(&self) -> Result<Vec<LinkedUser>, Error> {
+        let con = self.db.connect()?;
+
+        let mut rows = con.query("SELECT faceit_id, discord_id FROM users", ()).await?;
+
+        let mut users = Vec::new();
+
+        while let Some(row) = rows.next().await? {
+            let parsed_user = LinkedUser::from_row(&row);
+            match parsed_user {
+                Ok(parsed_user) => {
+                    users.push(parsed_user);
+                },
+                Err(err) => error!("Failed to parse row to LinkedUser: {}", err)
+            }
+        }
+
+        Ok(users)
     }
 
 }

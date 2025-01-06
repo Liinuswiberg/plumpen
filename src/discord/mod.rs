@@ -6,6 +6,7 @@ use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use std::thread;
 use anyhow::Error;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -197,6 +198,31 @@ impl DiscordBot {
             }
         }
 
+    }
+
+    async fn name_syncer(&self) {
+
+        info!("Starting name sync task");
+
+        loop {
+
+            let db = self.database.lock().await;
+
+            let Ok(users) = db.fetch_users().await else {
+                error!("Could not get users from database");
+                sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+
+            drop(db);
+
+            for user in users.iter() {
+                println!("{}", user.discord_id);
+            }
+
+            info!("Name sync resting for 2 seconds.");
+            sleep(Duration::from_secs(2)).await;
+        }
     }
 
 }
