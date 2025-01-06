@@ -24,6 +24,7 @@ async fn serenity(
     std::env::set_var("TURSO_TOKEN", secrets.get("TURSO_TOKEN").context("'TURSO_TOKEN' was not found")?);
     std::env::set_var("TURSO_DATABASE", secrets.get("TURSO_DATABASE").context("'TURSO_DATABASE' was not found")?);
     std::env::set_var("FACEIT_TOKEN", secrets.get("FACEIT_TOKEN").context("'FACEIT_TOKEN' was not found")?);
+    std::env::set_var("BOT_OWNER", secrets.get("BOT_OWNER").context("'BOT_OWNER' was not found")?);
 
     let intents = GatewayIntents::GUILD_MEMBERS |
         GatewayIntents::GUILD_MESSAGES |

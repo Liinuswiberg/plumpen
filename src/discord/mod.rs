@@ -6,7 +6,7 @@ use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use std::thread;
+use std::{env, thread};
 use anyhow::Error;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -32,28 +32,28 @@ const ALL_ROLES: &[&str] = &[
 
 impl DiscordBot {
 
-    pub async fn link_user(parsed_username: &String, ctx: &Context, msg: &Message) -> Result<bool, Error>{
+    pub async fn link_user(parsed_username: &String, ctx: &Context, discord_id: UserId, msg: &Message) -> Result<bool, Error>{
 
         let Some(player_data) = Faceit::get_faceit_user_by_nickname(parsed_username.to_string()).await? else {
             msg.channel_id.say(&ctx.http, "Faceit account not found.").await?;
             return Ok(false);
         };
 
-        let exists = Database.user_exists(msg.author.id.to_string()).await?;
+        let exists = Database.user_exists(discord_id.to_string()).await?;
 
         if exists {
             msg.channel_id.say(&ctx.http, "User already linked, unlink using '!unlink'.").await?;
             return Ok(false);
         };
 
-        let success = Database.add_user(player_data.player_id.to_string(), msg.author.id.to_string()).await?;
+        let success = Database.add_user(player_data.player_id.to_string(),discord_id.to_string()).await?;
 
-        let _ = Self::parse_user(&ctx.http, msg.author.id, player_data);
+        let _ = Self::parse_user(&ctx.http, discord_id, player_data);
 
         Ok(success)
     }
 
-    pub async fn clear_user(http: &Arc<Http>, discord_id: UserId) -> () {
+    pub async fn clear_user(http: &Arc<Http>, discord_id: UserId) {
 
         let Ok(guilds) = http.get_guilds(None, Some(100)).await else {
             error!("Error attempting to get guilds.");
@@ -252,6 +252,17 @@ impl EventHandler for DiscordBot {
         info!(msg.content);
 
         let link_regex = Regex::new(r"^!link (\S+)$").unwrap();
+        let force_link_regex = Regex::new(r"^!forcelink\s+(\w+)\s+(\d+)$").unwrap();
+        let force_unlink_regex = Regex::new(r"^!forceunlink\s+(\w+)$").unwrap();
+
+        let owner = env::var("BOT_OWNER").expect("Failed to get BOT_OWNER!");
+
+        let Ok(owner_u64_id) = owner.parse::<u64>() else {
+            error!("Error parsing owner id to u64");
+            return;
+        };
+
+        let is_owner = msg.author.id != owner_u64_id;
 
         if msg.content == "!status" {
 
@@ -296,7 +307,7 @@ impl EventHandler for DiscordBot {
                     error!("Error sending message: {:?}", e);
                 }
                 info!("Attempting to clear nickname in all relevant guilds.");
-                Self::clear_user(&ctx.http, msg.author.id);
+                Self::clear_user(&ctx.http, msg.author.id).await;
             } else {
                 if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to unlink user '{}'.", msg.author.name)).await {
                     error!("Error sending message: {:?}", e);
@@ -316,7 +327,7 @@ impl EventHandler for DiscordBot {
                 return;
             };
 
-            match Self::link_user(&parsed_username, &ctx, &msg).await {
+            match Self::link_user(&parsed_username, &ctx, msg.author.id, &msg).await {
                 Ok(success) => {
                     if success {
                         info!("Successfully linked user: {}", msg.author.name);
@@ -333,6 +344,110 @@ impl EventHandler for DiscordBot {
                     }
                     error!("Error linking user {}", e);
                 }
+            }
+
+        } else if let Some(caps) = force_link_regex.captures(&*msg.content) {
+
+            if is_owner {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            let Some(username) = caps.get(1) else {
+                error!("Error getting username from regex capture");
+                return;
+            };
+
+            let Ok(parsed_username) = username.as_str().parse() else {
+                error!("Error parsing username");
+                return;
+            };
+
+            let Some(discord_id) = caps.get(2) else {
+                error!("Error getting discord id from regex capture");
+                return;
+            };
+
+            let parsed_discord_id = discord_id.as_str().to_string();
+
+            let Ok(u64_id) = parsed_discord_id.parse::<u64>() else {
+                error!("Error parsing userid to u64");
+                return;
+            };
+
+            match Self::link_user(&parsed_username, &ctx, UserId::new(u64_id), &msg).await {
+                Ok(success) => {
+                    if success {
+                        info!("Successfully force linked user: {}", parsed_discord_id);
+                        if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully force linked Discord user '{}' to Faceit account '{}'.", parsed_discord_id, parsed_username)).await {
+                            error!("Error sending message: {:?}", e);
+                        }
+                    } else {
+                        error!("Error linking Discord user '{}' to Faceit account '{}'", parsed_discord_id, parsed_username);
+                    }
+                },
+                Err(e) => {
+                    if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to forcefully link Discord user '{}' to Faceit account '{}'.", parsed_discord_id, parsed_username)).await {
+                        error!("Error sending message: {:?}", e);
+                    }
+                    error!("Error linking user {}", e);
+                }
+            }
+
+        } else if let Some(caps) = force_unlink_regex.captures(&*msg.content) {
+
+            if is_owner {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            let Some(discord_id) = caps.get(1) else {
+                error!("Error getting discord id from regex capture");
+                return;
+            };
+
+            let parsed_discord_id = discord_id.as_str().to_string();
+
+            let Ok(u64_id) = parsed_discord_id.parse::<u64>() else {
+                error!("Error parsing userid to u64");
+                return;
+            };
+
+            let Ok(exists) = Database.user_exists(parsed_discord_id.clone()).await else {
+                error!("Error checking if user exists");
+                return;
+            };
+
+            if !exists {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"User not linked.").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            let Ok(success) = Database.unlink_user(parsed_discord_id.clone()).await else {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to force unlink user '{}'.", parsed_discord_id)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                error!("Error force unlinking user");
+                return;
+            };
+
+            if success {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Successfully force unlinked user '{}'.", parsed_discord_id)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                info!("Attempting to clear nickname in all relevant guilds.");
+                Self::clear_user(&ctx.http, UserId::new(u64_id)).await;
+            } else {
+                if let Err(e) = msg.channel_id.say(&ctx.http,format!("Error when attempting to force unlink user '{}'.", parsed_discord_id)).await {
+                    error!("Error sending message: {:?}", e);
+                }
+                error!("Error unlinking user");
             }
 
         }
