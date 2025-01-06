@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
-use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User, PartialGuild};
+use serenity::all::{Context, EventHandler, Message, Ready, Guild, UnavailableGuild, RoleId, Role, EditRole, GuildId, UserId, Http, Member, ErrorResponse, User, PartialGuild, Channel};
 use serenity::model::{guild, Colour};
 use serenity::{async_trait, http};
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::{env, thread};
+use std::future::Future;
 use anyhow::Error;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -271,10 +272,13 @@ impl EventHandler for DiscordBot {
         // Debug
         info!(msg.content);
 
+        // Maybe check if message starts with command, and then create the regex stuff inside the if statement?
+        // Will rework to proper "/" application commands later, so maybe do that then.
         let link_regex = Regex::new(r"^!link ([A-Za-z0-9-_]+)$").unwrap();
         let force_link_regex = Regex::new(r"^!forcelink\s+([\w-]+)\s+(\d+)$").unwrap();
         let force_unlink_regex = Regex::new(r"^!forceunlink\s+(\w+)$").unwrap();
         let refresh_regex = Regex::new(r"\(\d+ ELO\)\s+([A-Za-z0-9-_]+)").unwrap();
+        let leave_guild_regex = Regex::new(r"^!guilds leave (\d+)$").unwrap();
 
         let owner = env::var("BOT_OWNER").expect("Failed to get BOT_OWNER!");
 
@@ -298,6 +302,30 @@ impl EventHandler for DiscordBot {
             };
 
             if let Err(e) = msg.channel_id.say(&ctx.http, format!("Connected to {} guilds. Total of {} users linked.", guilds.len(), user_count)).await {
+                error!("Error sending message: {:?}", e);
+            }
+
+        } else if msg.content == "!guilds" {
+
+            if is_owner {
+                if let Err(e) = msg.channel_id.say(&ctx.http,"You are not allowed to use this command!").await {
+                    error!("Error sending message: {:?}", e);
+                }
+                return;
+            }
+
+            let Ok(guilds) = ctx.http.get_guilds(None, Some(100)).await else {
+                error!("Error attempting to get guilds.");
+                return;
+            };
+
+            let mut message = String::from("# Guilds \n");
+
+            for guild_info in guilds.iter() {
+                message.push_str(format!("**Guild**: '{}', **ID**: '{}'.\n", guild_info.name, guild_info.id).as_str());
+            }
+
+            if let Err(e) = msg.channel_id.say(&ctx.http,message).await {
                 error!("Error sending message: {:?}", e);
             }
 
@@ -552,6 +580,29 @@ impl EventHandler for DiscordBot {
                     error!("Error sending message: {:?}", e);
                 }
                 error!("Error unlinking user");
+            }
+
+        } else if let Some(caps) = leave_guild_regex.captures(&*msg.content) {
+            let guild_id = caps.get(1).map_or("", |m| m.as_str());
+
+            let Ok(u64_id) = guild_id.parse::<u64>() else {
+                error!("Error guild id to u64");
+                return;
+            };
+
+            match ctx.http.leave_guild(GuildId::new(u64_id)).await {
+                Ok(_) => {
+                    info!("Left guild: '{}'", u64_id);
+                    if let Err(e) = msg.channel_id.say(&ctx.http, "Left guild.").await {
+                        error!("Error sending message: {:?}", e);
+                    }
+                },
+                _ => {
+                    error!("Error leaving guild: '{}'", u64_id);
+                    if let Err(e) = msg.channel_id.say(&ctx.http, "Error when leaving guild.").await {
+                        error!("Error sending message: {:?}", e);
+                    }
+                }
             }
 
         }
