@@ -38,7 +38,7 @@ async fn serenity(
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![discord::commands::help(), discord::commands::link()],
+            commands: vec![discord::commands::help(), discord::commands::link(), discord::commands::unlink()],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {

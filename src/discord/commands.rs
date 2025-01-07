@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tracing::{error, info};
 use crate::{Context, Error, PoiseContext};
+use crate::database::Database;
 use crate::discord::DiscordBot;
 
 #[poise::command(prefix_command, track_edits, slash_command)]
@@ -22,15 +23,23 @@ pub async fn help(
     Ok(())
 }
 
-#[poise::command(prefix_command, track_edits, slash_command)]
+/// This is the description of my cool command, it can span multiple
+/// lines if you need to
+///
+/// Here in the following paragraphs, you can give information on how \
+/// to use the command that will be shown in your command's help.
+///
+/// You could also put example invocations here:
+/// `/link Verity`
+#[poise::command(prefix_command, track_edits, slash_command, description_localized("en", "Links to Faceit Account"))]
 pub async fn link(
     ctx: PoiseContext<'_>,
-    username: String
+    #[description = "Faceit username"] username: String
 ) -> Result<(), Error> {
 
     let author = ctx.author();
 
-    let http = Arc::new(ctx.http());
+    let http = ctx.http();
 
     match DiscordBot::link_user(&username, http, author.id, Some(&ctx)).await {
         Ok(success) => {
@@ -45,6 +54,44 @@ pub async fn link(
             ctx.say(format!("Error when attempting to link Discord user '{}' to Faceit account '{}'.", author.name, username)).await?;
             error!("Error linking user {}", e);
         }
+    }
+
+    Ok(())
+}
+
+/// Unlinks from Faceit account
+#[poise::command(prefix_command, track_edits, slash_command)]
+pub async fn unlink(
+    ctx: PoiseContext<'_>,
+) -> Result<(), Error> {
+
+    let author = ctx.author();
+
+    let http = ctx.http();
+
+    let Ok(exists) = Database.user_exists(author.id.to_string()).await else {
+        error!("Error checking if user exists");
+        return Ok(())
+    };
+
+    if !exists {
+        ctx.say("User not linked. Please link using '!link *faceitUsername*'").await?;
+        return Ok(())
+    };
+
+    let Ok(success) = Database.unlink_user(author.id.to_string()).await else {
+        ctx.say(format!("Error when attempting to unlink user '{}'.", author.name)).await?;
+        error!("Error unlinking user");
+        return Ok(())
+    };
+
+    if success {
+        ctx.say(format!("Successfully unlinked user '{}'.", author.name)).await?;
+        info!("Attempting to clear nickname in all relevant guilds.");
+        DiscordBot::clear_user(http, author.id).await;
+    } else {
+        ctx.say(format!("Error when attempting to unlink user '{}'.", author.name)).await?;
+        error!("Error unlinking user");
     }
 
     Ok(())
