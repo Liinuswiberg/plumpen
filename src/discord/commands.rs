@@ -191,14 +191,14 @@ pub async fn forceunlink(
         return Ok(());
     };
 
-    let exists = Database.user_exists(user_id).await?;
+    let exists = Database.user_exists(user_id.clone()).await?;
 
     if !exists {
         ctx.say("User not linked.").await?;
         return Ok(());
     }
 
-    let Ok(success) = Database.unlink_user(user_id).await else {
+    let Ok(success) = Database.unlink_user(user_id.clone()).await else {
         ctx.say(format!("Error when attempting to force unlink user '{}'.", u64_id)).await?;
         error!("Error force unlinking user");
         return Ok(());
