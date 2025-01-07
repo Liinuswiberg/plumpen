@@ -38,19 +38,27 @@ async fn serenity(
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![discord::commands::help(), discord::commands::link(), discord::commands::unlink()],
+            commands: vec![
+                discord::commands::help(),
+                discord::commands::link(),
+                discord::commands::unlink(),
+                discord::commands::status(),
+                discord::commands::guilds(),
+                discord::commands::leave(),
+                discord::commands::forceunlink(),
+                discord::commands::forcelink(),
+                discord::commands::restore(),
+            ],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::new(1325921171417596006)).await?;
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 Ok(Data {})
             })
         })
         .build();
 
-//poise::builtins::register_in_guild()
-    //poise::builtins::register_globally(ctx, &framework.options().commands).await?;
     let client = Client::builder(secrets.get("DISCORD_TOKEN").expect("'DISCORD_TOKEN' was not found"), intents)
         .framework(framework)
         .event_handler(DiscordBot)
