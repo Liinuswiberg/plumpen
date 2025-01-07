@@ -148,18 +148,29 @@ pub async fn guilds(
 #[poise::command(prefix_command, track_edits, slash_command, owners_only)]
 pub async fn leave(
     ctx: PoiseContext<'_>,
-    #[description = "Guild ID"] guild_id: u64
+    #[description = "Guild ID"] guild_id: String
 ) -> Result<(), Error> {
 
     let http = ctx.http();
 
-    match http.leave_guild(GuildId::new(guild_id)).await {
+    let Ok(u64_id) = guild_id.parse::<u64>() else {
+        ctx.say("Guild ID not in valid format.").await?;
+        return Ok(());
+    };
+
+    let Ok(guild) = http.get_guild(GuildId::new(u64_id)).await else {
+        ctx.say("Guild not found.").await?;
+        return Ok(());
+    };
+
+
+    match guild.leave(http).await {
         Ok(_) => {
-            info!("Left guild: '{}'", guild_id);
+            info!("Left guild: '{}'", u64_id);
             ctx.say("Left guild.").await?;
         },
         _ => {
-            error!("Error leaving guild: '{}'", guild_id);
+            error!("Error leaving guild: '{}'", u64_id);
             ctx.say("Error when leaving guild.").await?;
         }
     }
@@ -170,30 +181,35 @@ pub async fn leave(
 #[poise::command(prefix_command, track_edits, slash_command, owners_only)]
 pub async fn forceunlink(
     ctx: PoiseContext<'_>,
-    #[description = "User ID (u64)"] user_id: u64
+    #[description = "User ID (u64)"] user_id: String
 ) -> Result<(), Error> {
 
     let http = ctx.http();
 
-    let exists = Database.user_exists(user_id.to_string()).await?;
+    let Ok(u64_id) = user_id.parse::<u64>() else {
+        ctx.say("User ID not in valid format.").await?;
+        return Ok(());
+    };
+
+    let exists = Database.user_exists(user_id).await?;
 
     if !exists {
         ctx.say("User not linked.").await?;
         return Ok(());
     }
 
-    let Ok(success) = Database.unlink_user(user_id.to_string()).await else {
-        ctx.say(format!("Error when attempting to force unlink user '{}'.", user_id)).await?;
+    let Ok(success) = Database.unlink_user(user_id).await else {
+        ctx.say(format!("Error when attempting to force unlink user '{}'.", u64_id)).await?;
         error!("Error force unlinking user");
         return Ok(());
     };
 
     if success {
-        ctx.say(format!("Successfully force unlinked user '{}'.", user_id)).await?;
+        ctx.say(format!("Successfully force unlinked user '{}'.", u64_id)).await?;
         info!("Attempting to clear nickname in all relevant guilds.");
-        DiscordBot::clear_user(http, UserId::new(user_id)).await;
+        DiscordBot::clear_user(http, UserId::new(u64_id)).await;
     } else {
-        ctx.say(format!("Error when attempting to force unlink user '{}'.", user_id)).await?;
+        ctx.say(format!("Error when attempting to force unlink user '{}'.", u64_id)).await?;
         error!("Error unlinking user");
     }
 
@@ -205,18 +221,23 @@ pub async fn forceunlink(
 pub async fn forcelink(
     ctx: PoiseContext<'_>,
     #[description = "Faceit username"] username: String,
-    #[description = "User ID (u64)"] user_id: u64
+    #[description = "User ID (u64)"] user_id: String
 ) -> Result<(), Error> {
 
     let http = ctx.http();
 
-    match DiscordBot::link_user(&username, http, UserId::new(user_id), Some(&ctx)).await {
+    let Ok(u64_id) = user_id.parse::<u64>() else {
+        ctx.say("User ID not in valid format.").await?;
+        return Ok(());
+    };
+
+    match DiscordBot::link_user(&username, http, UserId::new(u64_id), Some(&ctx)).await {
         Ok(success) => {
             if success {
-                info!("Successfully force linked user: {}", user_id);
+                info!("Successfully force linked user: {}", u64_id);
                 ctx.say(format!("Successfully force linked Discord user '{}' to Faceit account '{}'.", user_id, username)).await?;
             } else {
-                error!("Error linking Discord user '{}' to Faceit account '{}'", user_id, username);
+                error!("Error linking Discord user '{}' to Faceit account '{}'", u64_id, username);
             }
         },
         Err(e) => {
